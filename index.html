@@ -110,7 +110,7 @@
         <button data-section="referral">Referral</button>
         <button data-section="nft">NFT or Extra</button>
     </div>
-    <div class="error-message" id="error-message">Error: Could not connect to database. Changes may not save.</div>
+    <div class="error-message" id="error-message">Error: Could not connect to database. Using local storage. Changes may not persist across devices.</div>
     <div class="content">
         <div id="wallet" class="section active" contenteditable="true"></div>
         <div id="daily-check" class="section" contenteditable="true"></div>
@@ -120,18 +120,31 @@
     </div>
 
     <!-- Supabase Client -->
-    <script type="module">
-        import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+    <script>
+        // Fallback if primary CDN fails
+        if (typeof supabase === 'undefined') {
+            console.warn('Primary Supabase CDN failed, attempting fallback...');
+            const script = document.createElement('script');
+            script.src = 'https://unpkg.com/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js';
+            script.async = true;
+            script.onload = () => console.log('Fallback Supabase script loaded');
+            script.onerror = () => console.error('Fallback Supabase script failed to load');
+            document.head.appendChild(script);
+        }
 
         // Supabase configuration
         const supabaseUrl = 'https://opixnpgwjajkmrmhhlvh.supabase.co';
         const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9waXhucGd3amFqa21ybWhsbHZoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMDc2MjMsImV4cCI6MjA3MDY4MzYyM30.KlrlYhcNhadd_ipevgVGlqDrFq4LADOIPeLiR_vshjU';
         let supabase;
+        let useLocalStorage = false;
         try {
-            supabase = createClient(supabaseUrl, supabaseKey);
+            supabase = supabase.createClient(supabaseUrl, supabaseKey);
+            console.log('Supabase initialized successfully');
         } catch (error) {
-            console.error('Failed to initialize Supabase:', error);
+            console.error('Failed to initialize Supabase:', error.message);
             document.getElementById('error-message').style.display = 'block';
+            useLocalStorage = true;
         }
 
         const buttons = document.querySelectorAll('.menu button');
@@ -155,40 +168,69 @@
             });
         });
 
-        // Load content from Supabase
+        // Load content
         async function loadContent() {
-            if (!supabase) return;
             sections.forEach(async section => {
                 try {
+                    if (useLocalStorage || !supabase) {
+                        const savedContent = localStorage.getItem(`notes_${section.id}`);
+                        section.innerText = savedContent || `Click to type in ${section.id.replace('-', ' ')} section...`;
+                        return;
+                    }
                     const { data, error } = await supabase
                         .from('notes')
                         .select('content')
                         .eq('section_id', section.id)
                         .single();
-                    if (error && error.code !== 'PGRST116') {
-                        console.error('Error loading content for', section.id, ':', error);
+                    if (error) {
+                        if (error.code === 'PGRST116') {
+                            section.innerText = `Click to type in ${section.id.replace('-', ' ')} section...`;
+                        } else {
+                            console.error(`Error loading content for ${section.id}:`, error.message, error.details, error.hint);
+                            useLocalStorage = true;
+                            document.getElementById('error-message').style.display = 'block';
+                            const savedContent = localStorage.getItem(`notes_${section.id}`);
+                            section.innerText = savedContent || `Click to type in ${section.id.replace('-', ' ')} section...`;
+                        }
+                    } else {
+                        section.innerText = data?.content || `Click to type in ${section.id.replace('-', ' ')} section...`;
                     }
-                    section.innerText = data?.content || `Click to type in ${section.id.replace('-', ' ')} section...`;
                 } catch (error) {
-                    console.error('Error in loadContent:', error);
+                    console.error(`Unexpected error loading content for ${section.id}:`, error.message);
+                    useLocalStorage = true;
+                    document.getElementById('error-message').style.display = 'block';
+                    const savedContent = localStorage.getItem(`notes_${section.id}`);
+                    section.innerText = savedContent || `Click to type in ${section.id.replace('-', ' ')} section...`;
                 }
             });
         }
         loadContent();
 
-        // Save content to Supabase on input
+        // Save content
         sections.forEach(section => {
             section.addEventListener('input', async () => {
-                if (!supabase) return;
                 try {
+                    if (useLocalStorage || !supabase) {
+                        localStorage.setItem(`notes_${section.id}`, section.innerText);
+                        console.log(`Content saved to local storage for ${section.id}`);
+                        return;
+                    }
                     const { error } = await supabase
                         .from('notes')
-                        .upsert({ section_id: section.id, content: section.innerText });
+                        .upsert({ section_id: section.id, content: section.innerText }, { onConflict: 'section_id' });
                     if (error) {
-                        console.error('Error saving content for', section.id, ':', error);
+                        console.error(`Error saving content for ${section.id}:`, error.message, error.details, error.hint);
+                        useLocalStorage = true;
+                        document.getElementById('error-message').style.display = 'block';
+                        localStorage.setItem(`notes_${section.id}`, section.innerText);
+                    } else {
+                        console.log(`Content saved to Supabase for ${section.id}`);
                     }
                 } catch (error) {
-                    console.error('Error in saveContent:', error);
+                    console.error(`Unexpected error saving content for ${section.id}:`, error.message);
+                    useLocalStorage = true;
+                    document.getElementById('error-message').style.display = 'block';
+                    localStorage.setItem(`notes_${section.id}`, section.innerText);
                 }
             });
         });
