@@ -1,0 +1,197 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notepad with Menu</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        .menu {
+            background-color: #333;
+            padding: 10px 0;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+        }
+        .menu button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #555;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        .menu button:hover {
+            background-color: #777;
+        }
+        .menu button.active {
+            background-color: #007bff;
+        }
+        .content {
+            flex: 1;
+            padding: 20px;
+            background-color: #fff;
+            margin: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .section {
+            display: none;
+            width: 100%;
+            min-height: 80vh;
+            outline: none;
+            font-size: 16px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .section.active {
+            display: block;
+        }
+        .error-message {
+            color: red;
+            padding: 10px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="menu">
+        <button data-section="wallet" class="active">Wallet</button>
+        <button data-section="daily-check">Daily Check</button>
+        <button data-section="list">List</button>
+        <button data-section="referral">Referral</button>
+        <button data-section="nft">NFT or Extra</button>
+    </div>
+    <div class="error-message" id="error-message">Error: Could not connect to database. Changes may not save.</div>
+    <div class="content">
+        <div id="wallet" class="section active" contenteditable="true"></div>
+        <div id="daily-check" class="section" contenteditable="true"></div>
+        <div id="list" class="section" contenteditable="true"></div>
+        <div id="referral" class="section" contenteditable="true"></div>
+        <div id="nft" class="section" contenteditable="true"></div>
+    </div>
+
+    <!-- Supabase Client -->
+    <script type="module">
+        import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
+
+        // Supabase configuration
+        const supabaseUrl = 'https://opixnpgwjajkmrmhhlvh.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9waXhucGd3amFqa21ybWhsbHZoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxMDc2MjMsImV4cCI6MjA3MDY4MzYyM30.KlrlYhcNhadd_ipevgVGlqDrFq4LADOIPeLiR_vshjU';
+        let supabase;
+        try {
+            supabase = createClient(supabaseUrl, supabaseKey);
+        } catch (error) {
+            console.error('Failed to initialize Supabase:', error);
+            document.getElementById('error-message').style.display = 'block';
+        }
+
+        const buttons = document.querySelectorAll('.menu button');
+        const sections = document.querySelectorAll('.section');
+
+        // Menu switching
+        buttons.forEach(button => {
+            button.addEventListener('click', () => {
+                buttons.forEach(btn => btn.classList.remove('active'));
+                sections.forEach(section => section.classList.remove('active'));
+
+                button.classList.add('active');
+                const sectionId = button.getAttribute('data-section');
+                const section = document.getElementById(sectionId);
+                section.classList.add('active');
+
+                if (section.innerText.includes('Click to type')) {
+                    section.innerText = '';
+                    section.focus();
+                }
+            });
+        });
+
+        // Load content from Supabase
+        async function loadContent() {
+            if (!supabase) return;
+            sections.forEach(async section => {
+                try {
+                    const { data, error } = await supabase
+                        .from('notes')
+                        .select('content')
+                        .eq('section_id', section.id)
+                        .single();
+                    if (error && error.code !== 'PGRST116') {
+                        console.error('Error loading content for', section.id, ':', error);
+                    }
+                    section.innerText = data?.content || `Click to type in ${section.id.replace('-', ' ')} section...`;
+                } catch (error) {
+                    console.error('Error in loadContent:', error);
+                }
+            });
+        }
+        loadContent();
+
+        // Save content to Supabase on input
+        sections.forEach(section => {
+            section.addEventListener('input', async () => {
+                if (!supabase) return;
+                try {
+                    const { error } = await supabase
+                        .from('notes')
+                        .upsert({ section_id: section.id, content: section.innerText });
+                    if (error) {
+                        console.error('Error saving content for', section.id, ':', error);
+                    }
+                } catch (error) {
+                    console.error('Error in saveContent:', error);
+                }
+            });
+        });
+    </script>
+</body>
+</html>
